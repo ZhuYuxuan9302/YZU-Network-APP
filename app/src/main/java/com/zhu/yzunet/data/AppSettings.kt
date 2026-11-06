@@ -38,6 +38,13 @@ data class AppSettings(
         const val DEFAULT_CHECK_URL = "http://connect.rom.miui.com/generate_204"
         const val DEFAULT_CHECK_INTERVAL = 15
 
+        /**
+         * 校园无线网络名称。只有连在它（或 `YZU-WLAN-xxx` 这类衍生名）上才会执行认证，
+         * 避免连到其他 Wi-Fi 时连通性检测通过、造成「假成功」。
+         * 学校改了 SSID 的话改这一行即可。
+         */
+        const val CAMPUS_SSID = "YZU-WLAN"
+
         /** 触发网关拦截页的探测地址 */
         const val PORTAL_DETECT_URL = "http://123.123.123.123"
 

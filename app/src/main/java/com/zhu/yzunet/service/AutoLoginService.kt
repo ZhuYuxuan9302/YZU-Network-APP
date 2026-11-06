@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
 class AutoLoginService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val client = CampusNetClient()
+    private val client = CampusNetClient(this)
 
     /** 常驻监控循环是否在跑 */
     private var running = false
@@ -98,6 +98,14 @@ class AutoLoginService : Service() {
             if (!settings.hasCredentials) {
                 title = "无法自动登录"
                 text = "还没有保存账号密码，请先打开应用填写"
+                return
+            }
+
+            // 非校园网直接跳过，避免连通性检测通过造成「假成功」
+            val ssid = NetworkUtils.currentSsid(this)
+            if (ssid != null && !NetworkUtils.isCampusSsid(ssid)) {
+                title = "不在校园网"
+                text = "当前 Wi-Fi「$ssid」不是 ${AppSettings.CAMPUS_SSID}，未执行认证"
                 return
             }
 
@@ -163,8 +171,18 @@ class AutoLoginService : Service() {
                 continue
             }
 
-            if (!NetworkUtils.isWifiConnected(this)) {
+            if (!NetworkUtils.hasCampusNetwork(this)) {
                 updateNotification("未连接 Wi-Fi", "自动重连已暂停")
+                delay(30_000L)
+                continue
+            }
+
+            val ssid = NetworkUtils.currentSsid(this)
+            if (ssid != null && !NetworkUtils.isCampusSsid(ssid)) {
+                updateNotification(
+                    "不在校园网",
+                    "当前 Wi-Fi「$ssid」不是 ${AppSettings.CAMPUS_SSID}，已暂停自动重连",
+                )
                 delay(30_000L)
                 continue
             }

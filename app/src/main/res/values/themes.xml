@@ -2,7 +2,10 @@
 <resources>
     <style name="Theme.YZUNet" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/app_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- 关闭系统强制深色反转，配色完全交给 Compose 主题控制 -->
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 
     <!-- 自动化入口用：完全透明、不遮挡、无标题 -->

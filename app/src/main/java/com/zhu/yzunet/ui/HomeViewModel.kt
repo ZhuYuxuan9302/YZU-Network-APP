@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.zhu.yzunet.data.AppSettings
 import com.zhu.yzunet.data.CampusNetClient
 import com.zhu.yzunet.data.LoginOutcome
+import com.zhu.yzunet.data.NetworkUtils
 import com.zhu.yzunet.data.SettingsStore
 import com.zhu.yzunet.service.AutoLoginService
 import com.zhu.yzunet.util.PinResult
@@ -44,15 +45,24 @@ data class UiState(
     val statusDetail: String = "尚未检测",
     val busy: Boolean = false,
     val logs: List<String> = emptyList(),
+    /** 当前 Wi-Fi 名称；null 表示读不到（未连接 / 无定位权限） */
+    val wifiSsid: String? = null,
+    /** 是否已获得读取 SSID 所需的定位权限 */
+    val canReadSsid: Boolean = false,
 )
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val store = SettingsStore(application)
-    private val client = CampusNetClient()
+    private val client = CampusNetClient(application)
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
-    private val _ui = MutableStateFlow(UiState(settings = store.load()))
+    private val _ui = MutableStateFlow(
+        UiState(
+            settings = store.load(),
+            canReadSsid = NetworkUtils.hasLocationPermission(application),
+        )
+    )
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
     private var launched = false
@@ -65,12 +75,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         if (launched) return
         launched = true
 
+        refreshNetworkInfo()
+
         val settings = _ui.value.settings
         if (settings.autoReconnect) {
             runCatching { AutoLoginService.start(getApplication()) }
         }
         if (!settings.hasCredentials) {
-            addLog("还没有保存账号，请填入学工号与密码后点「一键登录」")
+            addLog("还没有保存账号，请填入学工号与密码后点「一键连接」")
             return
         }
         addLog("已载入账号 ${mask(settings.userId)}，服务：${settings.serviceName}")
@@ -78,6 +90,26 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             login()
         } else {
             checkOnly()
+        }
+    }
+
+    /** 刷新当前 Wi-Fi 名称与定位权限状态（授权回调、回到前台时调用） */
+    fun refreshNetworkInfo() {
+        val app = getApplication<Application>()
+        val granted = NetworkUtils.hasLocationPermission(app)
+        val ssid = if (granted) NetworkUtils.currentSsid(app) else null
+        val previous = _ui.value.wifiSsid
+        _ui.update { it.copy(canReadSsid = granted, wifiSsid = ssid) }
+
+        // 只在 Wi-Fi 变化时记一条，避免每次回到前台都刷日志
+        if (granted && ssid != null && ssid != previous) {
+            addLog(
+                if (NetworkUtils.isCampusSsid(ssid)) {
+                    "当前 Wi-Fi：$ssid（校园网）"
+                } else {
+                    "当前 Wi-Fi：$ssid（非 ${AppSettings.CAMPUS_SSID}）"
+                }
+            )
         }
     }
 
@@ -131,14 +163,20 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---------------- 动作 ----------------
 
-    fun login() {
+    /**
+     * 登录入口。默认**先探测连通性，确认离线才提交认证**：
+     * 已经在线时网关不会拦截请求，也就拿不到认证入口，硬登录只会得到一个假失败。
+     *
+     * @param force true 时跳过检测直接认证，用于切换运营商服务或强制重新登录。
+     */
+    fun login(force: Boolean = false) {
         val state = _ui.value
         if (state.busy) return
 
         // 输入框不再边输入边 trim（避免光标跳动），提交前统一去空格；密码不做 trim
         val settings = state.settings.copy(
             userId = state.settings.userId.trim(),
-            checkUrl = state.settings.checkUrl.trim(),
+            checkUrl = state.settings.checkUrl.trim().ifBlank { AppSettings.DEFAULT_CHECK_URL },
         )
         if (!settings.hasCredentials) {
             addLog("请先填写学工号和密码")
@@ -150,8 +188,77 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
-            _ui.update { it.copy(busy = true, status = NetStatus.LoggingIn, statusDetail = "正在登录…") }
-            addLog("开始登录 —— 服务：${settings.serviceName}")
+            _ui.update { it.copy(busy = true) }
+
+            val app = getApplication<Application>()
+            val canReadSsid = NetworkUtils.hasLocationPermission(app)
+            val ssid = if (canReadSsid) NetworkUtils.currentSsid(app) else null
+            _ui.update { it.copy(canReadSsid = canReadSsid, wifiSsid = ssid) }
+
+            // ⓪ 先确认连的确实是校园网：别的 Wi-Fi 上连通性检测同样会通过，
+            //    不校验 SSID 就会出现「假成功」——检测说在线，其实根本没认证。
+            if (!NetworkUtils.hasCampusNetwork(app)) {
+                addLog("当前没有连接到 Wi-Fi / 以太网，已中止认证")
+                _ui.update {
+                    it.copy(
+                        busy = false,
+                        status = NetStatus.Failed,
+                        statusDetail = "未连接 Wi-Fi，请先连上 ${AppSettings.CAMPUS_SSID}",
+                    )
+                }
+                return@launch
+            }
+
+            when {
+                ssid == null -> addLog(
+                    if (canReadSsid) {
+                        "无法读取 Wi-Fi 名称，已跳过校名校验"
+                    } else {
+                        "未授予定位权限，无法校验 Wi-Fi 名称，已跳过校名校验"
+                    }
+                )
+
+                !NetworkUtils.isCampusSsid(ssid) -> {
+                    addLog("当前 Wi-Fi 是「$ssid」，不是 ${AppSettings.CAMPUS_SSID}，已中止认证")
+                    _ui.update {
+                        it.copy(
+                            busy = false,
+                            status = NetStatus.Failed,
+                            statusDetail = "当前连接「$ssid」不是 ${AppSettings.CAMPUS_SSID}，未执行认证",
+                        )
+                    }
+                    return@launch
+                }
+
+                else -> addLog("校园网校名校验通过：$ssid")
+            }
+
+            // ① 先探测：在线就没必要认证
+            if (!force) {
+                _ui.update { it.copy(status = NetStatus.Checking, statusDetail = "正在检测网络…") }
+                addLog("先检测外网连通性…")
+                val check = client.checkOnline(settings.checkUrl)
+                addLog("连通性：${if (check.online) "在线" else "离线"}（${check.detail}）")
+
+                if (check.online) {
+                    _ui.update {
+                        it.copy(
+                            busy = false,
+                            status = NetStatus.Online,
+                            statusDetail = "外网已可用（${check.detail}），无需登录",
+                        )
+                    }
+                    addLog("外网已可用，跳过认证（如需切换服务请用「强制认证」）")
+                    return@launch
+                }
+                addLog("检测到未连接外网，开始认证…")
+            } else {
+                addLog("已跳过连通性检测，强制重新认证…")
+            }
+
+            // ② 执行认证
+            _ui.update { it.copy(status = NetStatus.LoggingIn, statusDetail = "正在认证…") }
+            addLog("提交认证 —— 服务：${settings.serviceName}")
 
             val outcome = client.login(
                 userId = settings.userId,
@@ -178,6 +285,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
+            // ③ 认证成功后复检，确认外网真的通了
             if (outcome is LoginOutcome.Success) {
                 delay(1200)
                 val check = client.checkOnline(settings.checkUrl)

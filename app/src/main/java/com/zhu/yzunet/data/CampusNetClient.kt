@@ -1,8 +1,11 @@
 package com.zhu.yzunet.data
 
+import android.content.Context
+import android.net.Network
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.CacheControl
+import okhttp3.Dns
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -30,10 +33,23 @@ sealed interface LoginOutcome {
  *   2. 从拦截页里解析出实时有效的认证入口 URL
  *   3. 拆出 host 与 queryString
  *   4. POST http://{host}/eportal/InterFace.do?method=login
+ *
+ * 所有请求都会**绑定到 Wi-Fi / 以太网**发出：手机同时开着移动数据时，
+ * 系统可能把流量路由到蜂窝网络，那样既测不准连通性，也到不了校园网关。
  */
-class CampusNetClient {
+class CampusNetClient(context: Context) {
 
-    private val client: OkHttpClient = OkHttpClient.Builder()
+    private val appContext: Context = context.applicationContext
+
+    @Volatile
+    private var boundNetwork: Network? = null
+
+    @Volatile
+    private var boundClient: OkHttpClient? = null
+
+    private val defaultClient: OkHttpClient = newBuilder().build()
+
+    private fun newBuilder(): OkHttpClient.Builder = OkHttpClient.Builder()
         .followRedirects(true)
         .followSslRedirects(true)
         .retryOnConnectionFailure(true)
@@ -41,19 +57,39 @@ class CampusNetClient {
         .readTimeout(12, TimeUnit.SECONDS)
         .writeTimeout(12, TimeUnit.SECONDS)
         .callTimeout(25, TimeUnit.SECONDS)
-        .build()
+
+    /**
+     * 取绑定到校园网的 client；没有 Wi-Fi / 以太网时退回默认 client。
+     * 绑定方式：socketFactory 走该网络的底层 socket，DNS 也由该网络解析。
+     */
+    private fun client(): OkHttpClient {
+        val network = NetworkUtils.campusNetwork(appContext) ?: return defaultClient
+        boundClient?.let { cached -> if (boundNetwork == network) return cached }
+
+        return try {
+            val bound = newBuilder()
+                .socketFactory(network.socketFactory)
+                .dns(Dns { hostname -> network.getAllByName(hostname).toList() })
+                .build()
+            boundNetwork = network
+            boundClient = bound
+            bound
+        } catch (e: Exception) {
+            defaultClient
+        }
+    }
 
     /**
      * 主动探测外网连通性：返回 204 视为在线，其它状态 / 超时 / 连接失败均视为断线。
      */
     suspend fun checkOnline(checkUrl: String): CheckResult = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url(checkUrl)
-            .header("User-Agent", AppSettings.USER_AGENT)
-            .cacheControl(CacheControl.Builder().noCache().noStore().build())
-            .build()
         try {
-            client.newCall(request).execute().use { response ->
+            val request = Request.Builder()
+                .url(checkUrl)
+                .header("User-Agent", AppSettings.USER_AGENT)
+                .cacheControl(CacheControl.Builder().noCache().noStore().build())
+                .build()
+            client().newCall(request).execute().use { response ->
                 CheckResult(response.code == 204, "HTTP ${response.code}")
             }
         } catch (e: Exception) {
@@ -122,7 +158,7 @@ class CampusNetClient {
                 .build()
 
             val text = try {
-                client.newCall(request).execute().use { response ->
+                client().newCall(request).execute().use { response ->
                     log("拦截页响应：HTTP ${response.code}")
                     response.body?.string().orEmpty()
                 }
@@ -184,7 +220,7 @@ class CampusNetClient {
             .build()
 
         return try {
-            client.newCall(request).execute().use { response ->
+            client().newCall(request).execute().use { response ->
                 val text = response.body?.string().orEmpty()
                 log("登录接口响应：HTTP ${response.code}")
                 when {

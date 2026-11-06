@@ -3,6 +3,7 @@ package com.zhu.yzunet.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -80,10 +81,22 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.zhu.yzunet.data.AppSettings
+import com.zhu.yzunet.data.NetworkUtils
 
 private val CardShape = RoundedCornerShape(20.dp)
-private val SuccessGreen = Color(0xFF16A34A)
-private val DangerRed = Color(0xFFDC2626)
+
+/** 语义色：深色模式下提亮，保证在深色卡片上依然有足够对比度 */
+@Composable
+private fun successColor(): Color =
+    if (isSystemInDarkTheme()) Color(0xFF4ADE80) else Color(0xFF16A34A)
+
+@Composable
+private fun dangerColor(): Color =
+    if (isSystemInDarkTheme()) Color(0xFFF87171) else Color(0xFFDC2626)
+
+@Composable
+private fun warnColor(): Color =
+    if (isSystemInDarkTheme()) Color(0xFFFBBF24) else Color(0xFFB45309)
 
 /** 宽度达到该值时切换为双栏（平板横屏 / 大窗分屏） */
 private const val WIDE_WIDTH_DP = 720
@@ -95,10 +108,16 @@ private const val COMPACT_HEIGHT_DP = 420
 fun HomeScreen(
     vm: HomeViewModel,
     onRequestAutoReconnect: (Boolean) -> Unit,
+    onRequestSsidPermission: () -> Unit,
 ) {
     val ui by vm.ui.collectAsState()
 
     LaunchedEffect(Unit) { vm.onLaunch() }
+
+    // 首次进入且缺定位权限时请求一次；用户拒绝后不会反复弹
+    LaunchedEffect(ui.canReadSsid) {
+        if (!ui.canReadSsid) onRequestSsidPermission()
+    }
 
     // LocalConfiguration 会随窗口尺寸变化重组：旋转、分屏拖动分隔条、桌面模式缩放都能实时响应
     val configuration = LocalConfiguration.current
@@ -112,7 +131,7 @@ fun HomeScreen(
         bottomBar = {
             // 矮窗口里底部栏太占地方，改成把按钮内联到内容里
             if (!compactHeight) {
-                LoginBar(busy = ui.busy, onLogin = vm::login)
+                LoginBar(busy = ui.busy, onLogin = { vm.login() })
             }
         },
     ) { innerPadding ->
@@ -142,11 +161,11 @@ fun HomeScreen(
                         if (compactHeight) {
                             LoginButton(
                                 busy = ui.busy,
-                                onLogin = vm::login,
+                                onLogin = { vm.login() },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
-                        AccountCard(ui = ui, vm = vm)
+                        AccountCard(ui = ui, vm = vm, onRequestSsidPermission = onRequestSsidPermission)
                     }
 
                     Column(
@@ -179,11 +198,11 @@ fun HomeScreen(
                     if (compactHeight) {
                         LoginButton(
                             busy = ui.busy,
-                            onLogin = vm::login,
+                            onLogin = { vm.login() },
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    AccountCard(ui = ui, vm = vm)
+                    AccountCard(ui = ui, vm = vm, onRequestSsidPermission = onRequestSsidPermission)
                     ShortcutCard(onClick = vm::createShortcut)
                     AutomationCard(
                         ui = ui,
@@ -212,18 +231,34 @@ private fun statusVisual(status: NetStatus): StatusVisual = when (status) {
     NetStatus.Failed -> StatusVisual(Icons.Rounded.ErrorOutline, "认证失败")
 }
 
-private fun heroBrush(status: NetStatus): Brush = when (status) {
-    NetStatus.Online, NetStatus.Success ->
-        Brush.linearGradient(listOf(Color(0xFF34D399), Color(0xFF059669)))
+@Composable
+private fun heroBrush(status: NetStatus, dark: Boolean = isSystemInDarkTheme()): Brush {
+    val colors = when (status) {
+        NetStatus.Online, NetStatus.Success -> if (dark) {
+            listOf(Color(0xFF10B981), Color(0xFF047857))
+        } else {
+            listOf(Color(0xFF34D399), Color(0xFF059669))
+        }
 
-    NetStatus.Offline ->
-        Brush.linearGradient(listOf(Color(0xFFFBBF24), Color(0xFFD97706)))
+        NetStatus.Offline -> if (dark) {
+            listOf(Color(0xFFF59E0B), Color(0xFFB45309))
+        } else {
+            listOf(Color(0xFFFBBF24), Color(0xFFD97706))
+        }
 
-    NetStatus.Failed ->
-        Brush.linearGradient(listOf(Color(0xFFF87171), Color(0xFFDC2626)))
+        NetStatus.Failed -> if (dark) {
+            listOf(Color(0xFFEF4444), Color(0xFFB91C1C))
+        } else {
+            listOf(Color(0xFFF87171), Color(0xFFDC2626))
+        }
 
-    else ->
-        Brush.linearGradient(listOf(Color(0xFF60A5FA), Color(0xFF2563EB)))
+        else -> if (dark) {
+            listOf(Color(0xFF3B82F6), Color(0xFF1D4ED8))
+        } else {
+            listOf(Color(0xFF60A5FA), Color(0xFF2563EB))
+        }
+    }
+    return Brush.linearGradient(colors)
 }
 
 @Composable
@@ -349,7 +384,11 @@ private fun HeroCard(ui: UiState, onCheck: () -> Unit, compact: Boolean) {
 // ============================ 账户（始终可见、可编辑） ============================
 
 @Composable
-private fun AccountCard(ui: UiState, vm: HomeViewModel) {
+private fun AccountCard(
+    ui: UiState,
+    vm: HomeViewModel,
+    onRequestSsidPermission: () -> Unit,
+) {
     var passwordVisible by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
     val saved = ui.settings.hasCredentials
@@ -412,16 +451,35 @@ private fun AccountCard(ui: UiState, vm: HomeViewModel) {
 
         Spacer(Modifier.height(10.dp))
 
+        WifiHint(ui = ui, onRequestSsidPermission = onRequestSsidPermission)
+
+        Spacer(Modifier.height(6.dp))
+
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "改动会自动保存到本机（Keystore 加密）",
+                text = "改动自动保存到本机（Keystore 加密）",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
             if (saved) {
-                TextButton(onClick = { showClearDialog = true }) {
-                    Text("清除", fontSize = 12.sp, color = DangerRed)
+                TextButton(
+                    onClick = { vm.login(force = true) },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        horizontal = 8.dp,
+                        vertical = 0.dp,
+                    ),
+                ) {
+                    Text("强制认证", fontSize = 12.sp)
+                }
+                TextButton(
+                    onClick = { showClearDialog = true },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        horizontal = 8.dp,
+                        vertical = 0.dp,
+                    ),
+                ) {
+                    Text("清除", fontSize = 12.sp, color = dangerColor())
                 }
             }
         }
@@ -439,7 +497,7 @@ private fun AccountCard(ui: UiState, vm: HomeViewModel) {
                         showClearDialog = false
                     }
                 ) {
-                    Text("清除", color = DangerRed)
+                    Text("清除", color = dangerColor())
                 }
             },
             dismissButton = {
@@ -498,7 +556,7 @@ private fun ServiceSelector(selected: String, onSelect: (Int) -> Unit) {
 
 @Composable
 private fun SavedChip(saved: Boolean) {
-    val color = if (saved) SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant
+    val color = if (saved) successColor() else MaterialTheme.colorScheme.onSurfaceVariant
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
@@ -512,6 +570,78 @@ private fun SavedChip(saved: Boolean) {
             fontWeight = FontWeight.Medium,
             maxLines = 1,
         )
+    }
+}
+
+/**
+ * 当前 Wi-Fi 状态提示：是否连在校园网上、是否缺定位权限。
+ * 连错 Wi-Fi 时连通性检测照样能过，不提示用户根本发现不了。
+ */
+@Composable
+private fun WifiHint(ui: UiState, onRequestSsidPermission: () -> Unit) {
+    val ssid = ui.wifiSsid
+    val campus = ssid != null && NetworkUtils.isCampusSsid(ssid)
+
+    val color: Color
+    val message: String
+    val needPermission: Boolean
+
+    when {
+        !ui.canReadSsid -> {
+            color = warnColor()
+            message = "未授予定位权限，无法校验当前 Wi-Fi 是否为 ${AppSettings.CAMPUS_SSID}"
+            needPermission = true
+        }
+
+        ssid == null -> {
+            color = warnColor()
+            message = "未连接 Wi-Fi，请先连上 ${AppSettings.CAMPUS_SSID}"
+            needPermission = false
+        }
+
+        !campus -> {
+            color = dangerColor()
+            message = "当前 Wi-Fi「$ssid」不是 ${AppSettings.CAMPUS_SSID}，不会执行认证"
+            needPermission = false
+        }
+
+        else -> {
+            color = successColor()
+            message = "当前 Wi-Fi：$ssid"
+            needPermission = false
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = 0.10f))
+            .padding(
+                start = 12.dp,
+                end = if (needPermission) 4.dp else 12.dp,
+                top = 8.dp,
+                bottom = 8.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = message,
+            fontSize = 11.sp,
+            color = color,
+            modifier = Modifier.weight(1f),
+        )
+        if (needPermission) {
+            TextButton(
+                onClick = onRequestSsidPermission,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 8.dp,
+                    vertical = 0.dp,
+                ),
+            ) {
+                Text("授权", fontSize = 12.sp)
+            }
+        }
     }
 }
 
@@ -761,7 +891,7 @@ private fun LoginButton(busy: Boolean, onLogin: () -> Unit, modifier: Modifier =
         }
         Spacer(Modifier.width(8.dp))
         Text(
-            text = if (busy) "处理中…" else "一键登录校园网",
+            text = if (busy) "处理中…" else "一键连接校园网",
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
         )
