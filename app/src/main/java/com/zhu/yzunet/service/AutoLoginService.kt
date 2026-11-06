@@ -47,7 +47,13 @@ class AutoLoginService : Service() {
     private val scope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
 
-    private val client = CampusNetClient(this)
+    /**
+     * ⚠️ 必须用 by lazy，不能直接初始化。
+     * Service 的字段初始化跑在构造函数里，那时系统还没调用 attachBaseContext()，
+     * `this.applicationContext` 会抛 NullPointerException —— 进程直接崩溃，
+     * 而且发生在 onCreate 之前，任何 try/catch 都兜不住。
+     */
+    private val client: CampusNetClient by lazy { CampusNetClient(this) }
 
     /** 常驻监控循环是否在跑 */
     private var running = false
