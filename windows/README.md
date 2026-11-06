@@ -60,10 +60,9 @@ dotnet publish -c Release -r win-x64 --self-contained true `
 
 ```
 windows/YzuNet.Windows/
-├── App.xaml(.cs)                 # 启动、单实例、托盘图标
+├── App.xaml(.cs)                 # 启动、单实例唤醒、托盘图标；浅色基础配色与全部样式内联在这里
 ├── MainWindow.xaml(.cs)          # 主界面与全部交互
 ├── Assets/app.ico                # 程序图标（由 tools/gen_windows_icon.ps1 生成）
-├── Themes/Light.xaml, Dark.xaml  # 两套配色，运行时切换
 └── Services/
     ├── AppSettings.cs            # 配置模型
     ├── SettingsStore.cs          # JSON + DPAPI 持久化
@@ -71,8 +70,12 @@ windows/YzuNet.Windows/
     ├── NetworkMonitor.cs         # Wi-Fi / SSID 读取
     ├── AutoReconnectService.cs   # 断线自动重连循环
     ├── StartupManager.cs         # 开机自启（注册表）
-    └── ThemeManager.cs           # 主题与深浅色检测
+    └── ThemeManager.cs           # 深色主题（代码构造的画刷覆盖层）+ 深浅色检测
 ```
+
+> **资源为什么全放在 `App.xaml` 里**：运行期从外部 xaml 文件加载 `ResourceDictionary`
+> 依赖 `pack://` 解析，单文件发布下一旦解析失败，窗口创建会直接抛异常；现在配色与样式
+> 编译进 BAML，深色主题只是代码构造的一组画刷叠加覆盖，基本不存在"找不到资源"的可能。
 
 ## 常见问题
 
@@ -88,6 +91,16 @@ windows/YzuNet.Windows/
 
 **托盘图标不见了**
 Windows 11 会折叠隐藏图标，点任务栏的「^」把它拖出来固定即可。
+
+**打开报「出现未处理的异常」，或者再次打开说"已经在运行"但托盘里没有图标**
+这是旧版本的症状：窗口创建时抛异常被吞掉，进程还在、单实例锁还被占着，于是既没窗口也没托盘。
+现在已经改成：
+1. 配色与样式全部内联进 `App.xaml`（编译进 BAML），不再在运行期从外部 xaml 加载资源字典，`StaticResourceExtension` 类崩溃从根源上消失；
+2. 主界面构造/初始化任何一步失败都不再影响窗口创建；真起不来就弹一次带完整异常链的提示并**干净退出、释放单实例锁**；
+3. 完整的异常链（含 InnerException）写入 `%APPDATA%\YzuNet\crash.log`，托盘右键「打开配置与日志目录」可直接跳过去；
+4. 再次双击图标会**把已运行的实例唤到前台**，而不是弹"已经在运行"。
+
+万一还是遇到，请把 `crash.log` 里最新一段发出来（有 InnerException 才能定位真正原因）。
 
 **想让开机自启但不弹窗**
 自启写的是 `"<exe路径>" --tray`，启动即隐藏到托盘；不要把它从任务管理器「启动」里禁用。

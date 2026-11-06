@@ -26,10 +26,11 @@ public partial class MainWindow : Window
     private readonly CampusNetClient _client = new();
     private readonly AutoReconnectService _reconnect = new();
 
-    private AppSettings _settings;
+    private AppSettings _settings = new();
     private bool _loading = true;
     private bool _busy;
     private bool _reallyExit;
+    private bool _started;
 
     /// <summary>托盘菜单请求退出</summary>
     public event Action? ExitRequested;
@@ -41,23 +42,31 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
-        _settings = _store.Load();
-        PopulateStaticItems();
-        LoadSettingsIntoUi();
+        // 初始化任何一步失败都不能让窗口创建失败：否则进程活着但没有窗口也没有托盘，
+        // 用户再次双击只会看到"已经在运行"，只能去任务管理器杀进程。
+        try
+        {
+            _settings = _store.Load();
+            PopulateStaticItems();
+            LoadSettingsIntoUi();
 
-        _reconnect.StatusChanged += OnReconnectStatusChanged;
+            _reconnect.StatusChanged += OnReconnectStatusChanged;
 
-        UpdateThemeButton();
-        UpdateWifiHint();
-        UpdateSavedChip();
-        SetStatus("待检测", "尚未检测", StatusKind.Idle);
+            UpdateThemeButton();
+            UpdateWifiHint();
+            UpdateSavedChip();
+            SetStatus("待检测", "尚未检测", StatusKind.Idle);
+        }
+        catch (Exception e)
+        {
+            TryLog($"界面初始化异常：{e}");
+        }
 
-        Log("扬大校园网 · 一键连接（Windows 版）");
-        Log("关闭窗口会最小化到托盘，右键托盘图标可退出");
-        if (_settings.HasCredentials)
-            Log($"已载入账号 {Mask(_settings.UserId)}");
+        TryLog("扬大校园网 · 一键连接（Windows 版）");
+        TryLog("关闭窗口会最小化到托盘，右键托盘图标可退出");
+        if (_settings.HasCredentials) TryLog($"已载入账号 {Mask(_settings.UserId)}");
 
-        Loaded += MainWindow_Loaded;
+        Loaded += (_, _) => Startup();
     }
 
     // ==================== 初始化 ====================
@@ -96,19 +105,40 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 启动时的一次性初始化。由 App 在创建窗口后直接调用（--tray 隐藏启动时 Loaded 不会触发），
+    /// 窗口显示时也会再调一次，内部有幂等保护。
+    /// </summary>
+    public void Startup()
     {
-        RefreshWifiState();
+        if (_started) return;
+        _started = true;
 
-        if (_settings.AutoReconnect)
+        try
         {
-            _reconnect.Start();
-            Log("已恢复后台自动重连");
+            RefreshWifiState();
+        }
+        catch (Exception e)
+        {
+            TryLog($"网络状态检测异常：{e.Message}");
         }
 
-        if (_settings.AutoConnectOnStart && _settings.HasCredentials)
+        try
         {
-            await ConnectAsync(false);
+            if (_settings.AutoReconnect)
+            {
+                _reconnect.Start();
+                TryLog("已恢复后台自动重连");
+            }
+
+            if (_settings.AutoConnectOnStart && _settings.HasCredentials)
+            {
+                _ = ConnectAsync(false);
+            }
+        }
+        catch (Exception e)
+        {
+            TryLog($"启动初始化异常：{e.Message}");
         }
     }
 
@@ -359,18 +389,70 @@ public partial class MainWindow : Window
     private void SetHint(string text, string backgroundKey, string foregroundKey)
     {
         WifiHintText.Text = text;
-        WifiHintBorder.Background = (Brush)FindResource(backgroundKey);
-        WifiHintText.Foreground = (Brush)FindResource(foregroundKey);
+        WifiHintBorder.Background = ResourceBrush(backgroundKey);
+        WifiHintText.Foreground = ResourceBrush(foregroundKey);
     }
 
     private void UpdateSavedChip()
     {
         var saved = _settings.HasCredentials;
         SavedChipText.Text = saved ? "已保存" : "未填写";
-        SavedChipText.Foreground = (Brush)FindResource(saved ? "SuccessBrush" : "SubtleTextBrush");
-        SavedChipBorder.Background = (Brush)FindResource("ChipBackBrush");
+        SavedChipText.Foreground = ResourceBrush(saved ? "SuccessBrush" : "SubtleTextBrush");
+        SavedChipBorder.Background = ResourceBrush("ChipBackBrush");
         ClearButton.Visibility = saved ? Visibility.Visible : Visibility.Collapsed;
         ForceButton.Visibility = saved ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 取主题画刷。FindResource 在资源缺失时会抛 ResourceReferenceKeyNotFoundException，
+    /// 而本方法会在窗口构造期间被调用——一旦抛出就会出现"窗口建不出来、进程还在"的僵尸状态。
+    /// 所以统一用 TryFindResource + 硬编码兜底色。
+    /// </summary>
+    private Brush ResourceBrush(string key)
+    {
+        try
+        {
+            if (TryFindResource(key) is Brush brush) return brush;
+        }
+        catch
+        {
+            // ignore
+        }
+
+        var fallback = new SolidColorBrush(FallbackColor(key));
+        fallback.Freeze();
+        return fallback;
+    }
+
+    private static Color FallbackColor(string key)
+    {
+        var dark = ThemeManager.IsDark;
+
+        switch (key)
+        {
+            case "HintSuccessBackBrush":
+                return dark ? Color.FromRgb(0x12, 0x30, 0x1F) : Color.FromRgb(0xE9, 0xF8, 0xEF);
+            case "HintWarnBackBrush":
+                return dark ? Color.FromRgb(0x32, 0x26, 0x12) : Color.FromRgb(0xFF, 0xF5, 0xE3);
+            case "HintDangerBackBrush":
+                return dark ? Color.FromRgb(0x34, 0x18, 0x1A) : Color.FromRgb(0xFD, 0xEC, 0xEC);
+            case "ChipBackBrush":
+                return dark ? Color.FromRgb(0x23, 0x2B, 0x36) : Color.FromRgb(0xEA, 0xEF, 0xF7);
+            case "SuccessBrush":
+                return dark ? Color.FromRgb(0x4A, 0xDE, 0x80) : Color.FromRgb(0x16, 0xA3, 0x4A);
+            case "WarnBrush":
+                return dark ? Color.FromRgb(0xFB, 0xBF, 0x24) : Color.FromRgb(0xB4, 0x53, 0x09);
+            case "DangerBrush":
+                return dark ? Color.FromRgb(0xF8, 0x71, 0x71) : Color.FromRgb(0xDC, 0x26, 0x26);
+            case "SubtleTextBrush":
+                return dark ? Color.FromRgb(0xA7, 0xB0, 0xBE) : Color.FromRgb(0x5A, 0x64, 0x72);
+            case "TextBrush":
+                return dark ? Color.FromRgb(0xE3, 0xE6, 0xEC) : Color.FromRgb(0x14, 0x1A, 0x22);
+            case "CardBackgroundBrush":
+                return dark ? Color.FromRgb(0x16, 0x1C, 0x25) : Colors.White;
+            default:
+                return Colors.Transparent;
+        }
     }
 
     private void UpdateThemeButton()
@@ -384,13 +466,45 @@ public partial class MainWindow : Window
     {
         if (!Dispatcher.CheckAccess())
         {
-            Dispatcher.BeginInvoke(new Action(() => Log(message)));
+            if (Dispatcher.HasShutdownStarted) return;
+
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(() => Log(message)));
+            }
+            catch
+            {
+                // 退出过程中 Dispatcher 可能已经关停
+            }
+
             return;
         }
 
         LogList.Items.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
         while (LogList.Items.Count > 300) LogList.Items.RemoveAt(0);
-        LogList.ScrollIntoView(LogList.Items[LogList.Items.Count - 1]);
+
+        try
+        {
+            if (LogList.Items.Count > 0)
+                LogList.ScrollIntoView(LogList.Items[LogList.Items.Count - 1]);
+        }
+        catch
+        {
+            // 窗口还没完成布局时滚动可能失败，忽略即可
+        }
+    }
+
+    /// <summary>写日志且绝不抛异常：构造阶段日志面板也未必完全可用</summary>
+    private void TryLog(string message)
+    {
+        try
+        {
+            Log(message);
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     private static string Mask(string value) =>

@@ -1,4 +1,4 @@
-<Window x:Class="YzuNet.Windows.MainWindow"
+﻿<Window x:Class="YzuNet.Windows.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="扬大校园网 · 一键连接"
@@ -35,7 +35,7 @@
                             <Button Grid.Column="1"
                                     x:Name="HeroRefreshButton"
                                     Content="刷新"
-                                    Style="{StaticResource LinkButtonStyle}"
+                                    Style="{DynamicResource LinkButtonStyle}"
                                     Foreground="#E6FFFFFF"
                                     Click="HeroRefreshButton_Click" />
                         </Grid>
@@ -63,7 +63,7 @@
                 </Border>
 
                 <!-- ============ 账户与认证 ============ -->
-                <Border Style="{StaticResource CardStyle}">
+                <Border Style="{DynamicResource CardStyle}">
                     <StackPanel>
                         <Grid Margin="0,0,0,10">
                             <Grid.ColumnDefinitions>
@@ -72,7 +72,7 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0"
                                        Text="账户与认证"
-                                       Style="{StaticResource SectionTitleStyle}"
+                                       Style="{DynamicResource SectionTitleStyle}"
                                        Margin="0"
                                        VerticalAlignment="Center" />
                             <Border Grid.Column="1"
@@ -87,17 +87,17 @@
                             </Border>
                         </Grid>
 
-                        <TextBlock Text="学工号 / 用户名" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Text="学工号 / 用户名" Style="{DynamicResource FieldLabelStyle}" />
                         <TextBox x:Name="UserIdBox"
-                                 Style="{StaticResource InputStyle}"
+                                 Style="{DynamicResource InputStyle}"
                                  TextChanged="UserIdBox_TextChanged" />
 
-                        <TextBlock Text="校园网密码" Style="{StaticResource FieldLabelStyle}" Margin="0,10,0,4" />
+                        <TextBlock Text="校园网密码" Style="{DynamicResource FieldLabelStyle}" Margin="0,10,0,4" />
                         <PasswordBox x:Name="PasswordBox1"
-                                     Style="{StaticResource PasswordInputStyle}"
+                                     Style="{DynamicResource PasswordInputStyle}"
                                      PasswordChanged="PasswordBox_PasswordChanged" />
 
-                        <TextBlock Text="网络服务" Style="{StaticResource FieldLabelStyle}" Margin="0,10,0,4" />
+                        <TextBlock Text="网络服务" Style="{DynamicResource FieldLabelStyle}" Margin="0,10,0,4" />
                         <ComboBox x:Name="ServiceCombo"
                                   Height="34"
                                   VerticalContentAlignment="Center"
@@ -128,11 +128,11 @@
                             <StackPanel Grid.Column="1" Orientation="Horizontal">
                                 <Button x:Name="ForceButton"
                                         Content="强制认证"
-                                        Style="{StaticResource LinkButtonStyle}"
+                                        Style="{DynamicResource LinkButtonStyle}"
                                         Click="ForceButton_Click" />
                                 <Button x:Name="ClearButton"
                                         Content="清除"
-                                        Style="{StaticResource LinkButtonStyle}"
+                                        Style="{DynamicResource LinkButtonStyle}"
                                         Foreground="{DynamicResource DangerBrush}"
                                         Click="ClearButton_Click" />
                             </StackPanel>
@@ -141,38 +141,41 @@
                 </Border>
 
                 <!-- ============ 自动化 ============ -->
-                <Border Style="{StaticResource CardStyle}">
+                <Border Style="{DynamicResource CardStyle}">
                     <StackPanel>
-                        <TextBlock Text="自动化" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Text="自动化" Style="{DynamicResource SectionTitleStyle}" />
 
                         <CheckBox x:Name="AutoConnectCheck"
                                   Content="启动程序时自动连接"
+                                  Style="{DynamicResource ToggleCheckStyle}"
                                   Margin="0,0,0,8"
                                   Click="AutoConnectCheck_Click" />
                         <CheckBox x:Name="AutoReconnectCheck"
                                   Content="断线自动重连（后台常驻）"
+                                  Style="{DynamicResource ToggleCheckStyle}"
                                   Margin="0,0,0,8"
                                   Click="AutoReconnectCheck_Click" />
                         <CheckBox x:Name="AutoStartCheck"
                                   Content="开机自动启动（最小化到托盘）"
+                                  Style="{DynamicResource ToggleCheckStyle}"
                                   Margin="0,0,0,4"
                                   Click="AutoStartCheck_Click" />
 
-                        <TextBlock Text="检测间隔" Style="{StaticResource FieldLabelStyle}" Margin="0,10,0,4" />
+                        <TextBlock Text="检测间隔" Style="{DynamicResource FieldLabelStyle}" Margin="0,10,0,4" />
                         <ComboBox x:Name="IntervalCombo"
                                   Height="34"
                                   VerticalContentAlignment="Center"
                                   SelectionChanged="IntervalCombo_SelectionChanged" />
 
-                        <TextBlock Text="连通性检测地址" Style="{StaticResource FieldLabelStyle}" Margin="0,12,0,4" />
+                        <TextBlock Text="连通性检测地址" Style="{DynamicResource FieldLabelStyle}" Margin="0,12,0,4" />
                         <TextBox x:Name="CheckUrlBox"
-                                 Style="{StaticResource InputStyle}"
+                                 Style="{DynamicResource InputStyle}"
                                  LostFocus="CheckUrlBox_LostFocus" />
                     </StackPanel>
                 </Border>
 
                 <!-- ============ 运行日志 ============ -->
-                <Border Style="{StaticResource CardStyle}">
+                <Border Style="{DynamicResource CardStyle}">
                     <StackPanel>
                         <Grid Margin="0,0,0,8">
                             <Grid.ColumnDefinitions>
@@ -181,12 +184,12 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0"
                                        Text="运行日志"
-                                       Style="{StaticResource SectionTitleStyle}"
+                                       Style="{DynamicResource SectionTitleStyle}"
                                        Margin="0"
                                        VerticalAlignment="Center" />
                             <Button Grid.Column="1"
                                     Content="清空"
-                                    Style="{StaticResource LinkButtonStyle}"
+                                    Style="{DynamicResource LinkButtonStyle}"
                                     Click="ClearLogButton_Click" />
                         </Grid>
                         <ListBox x:Name="LogList"
@@ -201,7 +204,7 @@
                 </Border>
 
                 <Button Content="重置全部设置"
-                        Style="{StaticResource LinkButtonStyle}"
+                        Style="{DynamicResource LinkButtonStyle}"
                         Foreground="{DynamicResource DangerBrush}"
                         HorizontalAlignment="Center"
                         Margin="0,0,0,10"
@@ -224,12 +227,12 @@
                     <Button Grid.Column="0"
                             x:Name="ConnectButton"
                             Content="一键连接校园网"
-                            Style="{StaticResource PrimaryButtonStyle}"
+                            Style="{DynamicResource PrimaryButtonStyle}"
                             Click="ConnectButton_Click" />
                     <Button Grid.Column="1"
                             x:Name="ThemeButton"
                             Content="深色"
-                            Style="{StaticResource ToolButtonStyle}"
+                            Style="{DynamicResource ToolButtonStyle}"
                             Margin="10,0,0,0"
                             VerticalAlignment="Center"
                             Click="ThemeButton_Click" />
