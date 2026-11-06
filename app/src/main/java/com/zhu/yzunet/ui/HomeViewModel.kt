@@ -53,6 +53,8 @@ data class UiState(
     val canReadSsid: Boolean = false,
     /** 系统「定位」总开关是否开启（权限给了但开关关着，同样读不到 SSID） */
     val locationEnabled: Boolean = false,
+    /** 当前是否为有线（以太网）连接：这种场景没有 SSID，校名校验不适用 */
+    val isWired: Boolean = false,
 )
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
@@ -99,26 +101,36 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 刷新当前 Wi-Fi 名称与定位状态（授权回调、定位开关变化、网络变化、回到前台时调用） */
+    /** 刷新当前网络与定位状态（授权回调、定位开关变化、网络变化、回到前台时调用） */
     fun refreshNetworkInfo() {
         val app = getApplication<Application>()
+        val transport = NetworkUtils.currentTransport(app)
+        val wired = transport == NetworkUtils.Transport.Ethernet
+        val hasCampusNet = transport != NetworkUtils.Transport.None
+
         val granted = NetworkUtils.hasLocationPermission(app)
         val locationOn = NetworkUtils.isLocationEnabled(app)
-        val hasCampusNet = NetworkUtils.hasCampusNetwork(app)
-        val ssid = if (granted && locationOn) NetworkUtils.currentSsid(app) else null
-        val previous = _ui.value.wifiSsid
+        // 有线连接没有 SSID，不去读也无所谓
+        val ssid = if (!wired && granted && locationOn) NetworkUtils.currentSsid(app) else null
+        val previousSsid = _ui.value.wifiSsid
+        val previousWired = _ui.value.isWired
+
         _ui.update {
             it.copy(
                 canReadSsid = granted,
                 wifiSsid = ssid,
                 hasNetwork = hasCampusNet,
                 locationEnabled = locationOn,
+                isWired = wired,
             )
         }
 
-        // 只在 Wi-Fi 变化时记一条，避免每次刷新都刷日志
-        if (ssid != null && ssid != previous) {
-            addLog(
+        // 只在网络发生变化时记一条，避免每次刷新都刷日志
+        when {
+            wired && !previousWired ->
+                addLog("当前为有线连接（以太网），校名校验不适用")
+
+            ssid != null && ssid != previousSsid -> addLog(
                 if (NetworkUtils.isCampusSsid(ssid)) {
                     "当前 Wi-Fi：$ssid（校园网）"
                 } else {
@@ -252,16 +264,19 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             _ui.update { it.copy(busy = true) }
 
             val app = getApplication<Application>()
+            val transport = NetworkUtils.currentTransport(app)
+            val wired = transport == NetworkUtils.Transport.Ethernet
+            val hasCampusNet = transport != NetworkUtils.Transport.None
             val canReadSsid = NetworkUtils.hasLocationPermission(app)
             val locationOn = NetworkUtils.isLocationEnabled(app)
-            val hasCampusNet = NetworkUtils.hasCampusNetwork(app)
-            val ssid = if (canReadSsid && locationOn) NetworkUtils.currentSsid(app) else null
+            val ssid = if (!wired && canReadSsid && locationOn) NetworkUtils.currentSsid(app) else null
             _ui.update {
                 it.copy(
                     canReadSsid = canReadSsid,
                     wifiSsid = ssid,
                     hasNetwork = hasCampusNet,
                     locationEnabled = locationOn,
+                    isWired = wired,
                 )
             }
 
@@ -273,13 +288,16 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         busy = false,
                         status = NetStatus.Failed,
-                        statusDetail = "未连接 Wi-Fi，请先连上 ${AppSettings.CAMPUS_SSID}",
+                        statusDetail = "未连接网络，请连上 ${AppSettings.CAMPUS_SSID} 或插上网线",
                     )
                 }
                 return@launch
             }
 
             when {
+                // 有线连接没有 SSID 概念，校名校验不适用，直接进入认证
+                wired -> addLog("当前为有线连接，跳过校名校验")
+
                 ssid == null -> addLog(
                     if (canReadSsid) {
                         "无法读取 Wi-Fi 名称，已跳过校名校验"

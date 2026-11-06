@@ -15,6 +15,9 @@ import java.util.Locale
 
 object NetworkUtils {
 
+    /** 当前认证所用的物理连接类型 */
+    enum class Transport { None, Wifi, Ethernet }
+
     /** 无权限时系统返回的脱敏值 */
     private const val SSID_REDACTED = "<unknown ssid>"
     private const val SSID_UNKNOWN = "unknown ssid"
@@ -56,6 +59,23 @@ object NetworkUtils {
     }
 
     fun hasCampusNetwork(context: Context): Boolean = campusNetwork(context) != null
+
+    /**
+     * 当前连接类型。有线（以太网）也支持：某些宿舍/实验室走网线，
+     * 这种情况下没有 SSID，校名校验不适用。
+     */
+    fun currentTransport(context: Context): Transport {
+        val network = campusNetwork(context) ?: return Transport.None
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return Transport.None
+        val caps = cm.getNetworkCapabilities(network) ?: return Transport.None
+
+        return when {
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> Transport.Wifi
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> Transport.Ethernet
+            else -> Transport.None
+        }
+    }
 
     /**
      * Android 8.1 起，读取 Wi-Fi 名称需要定位权限；没有权限时系统会把 SSID 脱敏成

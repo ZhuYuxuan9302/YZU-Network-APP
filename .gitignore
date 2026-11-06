@@ -13,3 +13,10 @@ local.properties
 *.aab
 *.keystore
 !debug.keystore
+
+# Windows (WPF) 构建产物
+/windows/**/bin/
+/windows/**/obj/
+/windows/publish/
+*.user
+*.suo

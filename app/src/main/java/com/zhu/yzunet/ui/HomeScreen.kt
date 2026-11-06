@@ -610,15 +610,23 @@ private fun WifiHint(
     val action: (() -> Unit)?
 
     when {
-        // ① 根本没连 Wi-Fi —— 用 hasNetwork 判断，不能只看 SSID 是否为 null
+        // ① 既没有 Wi-Fi 也没有以太网
         !ui.hasNetwork -> {
             color = warnColor()
-            message = "未连接 Wi-Fi，请先连上 ${AppSettings.CAMPUS_SSID}"
+            message = "未连接网络，请连上 ${AppSettings.CAMPUS_SSID} 或插上网线"
             actionLabel = null
             action = null
         }
 
-        // ② 连着 Wi-Fi 但读不到名字：先看权限，再看系统定位总开关
+        // ② 有线连接：没有 SSID，校名校验不适用
+        ui.isWired -> {
+            color = successColor()
+            message = "当前网络：有线连接（校名校验仅适用于无线）"
+            actionLabel = null
+            action = null
+        }
+
+        // ③ 连着 Wi-Fi 但读不到名字：先看权限，再看系统定位总开关
         ssid == null -> {
             color = warnColor()
             when {

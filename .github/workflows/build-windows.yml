@@ -1,0 +1,42 @@
+name: Build Windows App
+
+on:
+  push:
+    paths:
+      - 'windows/**'
+      - '.github/workflows/build-windows.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore windows/YzuNet.Windows/YzuNet.Windows.csproj
+
+      - name: Build
+        run: dotnet build windows/YzuNet.Windows/YzuNet.Windows.csproj -c Release --no-restore
+
+      - name: Publish self-contained single file
+        run: >
+          dotnet publish windows/YzuNet.Windows/YzuNet.Windows.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o publish
+
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: yzu-net-windows
+          path: publish/*.exe
+          if-no-files-found: error

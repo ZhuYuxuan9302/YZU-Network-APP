@@ -208,7 +208,7 @@ class AutoLoginService : Service() {
             }
 
             if (!NetworkUtils.hasCampusNetwork(this)) {
-                updateNotification("未连接 Wi-Fi", "自动重连已暂停")
+                updateNotification("未连接网络", "自动重连已暂停（无线 / 有线都没有连接）")
                 delay(30_000L)
                 continue
             }
