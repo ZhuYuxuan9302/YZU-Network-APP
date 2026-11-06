@@ -60,6 +60,17 @@ internal object SecureCodec {
         cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(128, iv))
         String(cipher.doFinal(data), Charsets.UTF_8)
     }.getOrElse { "" }
+
+    /**
+     * 删除 Keystore 里的密钥。
+     * 用于「重置全部设置」：万一密钥本身损坏导致解密一直失败，重置后能自动重新生成一把。
+     */
+    fun resetKey() {
+        runCatching {
+            val ks = keyStore()
+            if (ks.containsAlias(KEY_ALIAS)) ks.deleteEntry(KEY_ALIAS)
+        }
+    }
 }
 
 /**
@@ -97,6 +108,12 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_AUTO_RECONNECT, settings.autoReconnect)
             .putInt(KEY_INTERVAL, settings.checkIntervalSec)
             .apply()
+    }
+
+    /** 清空全部持久化配置，并重置 Keystore 密钥（回到出厂状态） */
+    fun clear() {
+        runCatching { prefs.edit().clear().commit() }
+        SecureCodec.resetKey()
     }
 
     companion object {

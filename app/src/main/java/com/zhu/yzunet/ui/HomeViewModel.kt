@@ -51,13 +51,14 @@ data class UiState(
     val wifiSsid: String? = null,
     /** 是否已获得读取 SSID 所需的定位权限 */
     val canReadSsid: Boolean = false,
+    /** 系统「定位」总开关是否开启（权限给了但开关关着，同样读不到 SSID） */
+    val locationEnabled: Boolean = false,
 )
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val store = SettingsStore(application)
     private val client = CampusNetClient(application)
-    private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
     private val _ui = MutableStateFlow(
         UiState(
@@ -98,19 +99,25 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 刷新当前 Wi-Fi 名称与定位权限状态（授权回调、回到前台时调用） */
+    /** 刷新当前 Wi-Fi 名称与定位状态（授权回调、定位开关变化、网络变化、回到前台时调用） */
     fun refreshNetworkInfo() {
         val app = getApplication<Application>()
         val granted = NetworkUtils.hasLocationPermission(app)
+        val locationOn = NetworkUtils.isLocationEnabled(app)
         val hasCampusNet = NetworkUtils.hasCampusNetwork(app)
-        val ssid = if (granted) NetworkUtils.currentSsid(app) else null
+        val ssid = if (granted && locationOn) NetworkUtils.currentSsid(app) else null
         val previous = _ui.value.wifiSsid
         _ui.update {
-            it.copy(canReadSsid = granted, wifiSsid = ssid, hasNetwork = hasCampusNet)
+            it.copy(
+                canReadSsid = granted,
+                wifiSsid = ssid,
+                hasNetwork = hasCampusNet,
+                locationEnabled = locationOn,
+            )
         }
 
-        // 只在 Wi-Fi 变化时记一条，避免每次回到前台都刷日志
-        if (granted && ssid != null && ssid != previous) {
+        // 只在 Wi-Fi 变化时记一条，避免每次刷新都刷日志
+        if (ssid != null && ssid != previous) {
             addLog(
                 if (NetworkUtils.isCampusSsid(ssid)) {
                     "当前 Wi-Fi：$ssid（校园网）"
@@ -154,6 +161,35 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun clearCredentials() {
         mutateSettings { it.copy(userId = "", password = "") }
         addLog("已清除本机保存的账号信息")
+    }
+
+    /**
+     * 重置全部设置：账号、网络服务、自动化开关、检测地址、运行日志全部恢复出厂状态，
+     * 同时停掉后台服务并重建 Keystore 密钥。
+     * 用于「配置被改坏了又不知道原值」的恢复场景。
+     */
+    fun resetAllSettings() {
+        // 关键：先取消还在防抖队列里的落盘任务，否则它会把旧配置重新写回去
+        pendingSave?.cancel()
+        pendingSave = null
+        serviceStartWarned = false
+
+        // 先停服务，避免它继续拿旧配置去做自动重连
+        AutoLoginService.stop(getApplication())
+        store.clear()
+
+        _ui.update {
+            it.copy(
+                settings = AppSettings(),
+                status = NetStatus.Idle,
+                statusDetail = "尚未检测",
+                busy = false,
+                logs = emptyList(),
+            )
+        }
+
+        addLog("已重置全部设置，账号与自动化配置都已恢复默认值")
+        refreshNetworkInfo()
     }
 
     fun updateInterval(seconds: Int) {
@@ -217,10 +253,16 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
             val app = getApplication<Application>()
             val canReadSsid = NetworkUtils.hasLocationPermission(app)
+            val locationOn = NetworkUtils.isLocationEnabled(app)
             val hasCampusNet = NetworkUtils.hasCampusNetwork(app)
-            val ssid = if (canReadSsid) NetworkUtils.currentSsid(app) else null
+            val ssid = if (canReadSsid && locationOn) NetworkUtils.currentSsid(app) else null
             _ui.update {
-                it.copy(canReadSsid = canReadSsid, wifiSsid = ssid, hasNetwork = hasCampusNet)
+                it.copy(
+                    canReadSsid = canReadSsid,
+                    wifiSsid = ssid,
+                    hasNetwork = hasCampusNet,
+                    locationEnabled = locationOn,
+                )
             }
 
             // ⓪ 先确认连的确实是校园网：别的 Wi-Fi 上连通性检测同样会通过，
@@ -336,6 +378,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun checkOnly() {
         if (_ui.value.busy) return
+
+        // 点「刷新」时顺手重新读一次 Wi-Fi 名称与定位状态：
+        // 用户很可能刚从设置里打开定位，界面上的旧状态需要立刻纠正
+        refreshNetworkInfo()
+
         viewModelScope.launch {
             _ui.update { it.copy(busy = true, status = NetStatus.Checking, statusDetail = "正在检测…") }
             val check = client.checkOnline(_ui.value.settings.checkUrl.trim())
@@ -399,7 +446,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun addLog(message: String) {
-        val line = "[${timeFormat.format(Date())}] $message"
+        // 每次新建 formatter：SimpleDateFormat 不是线程安全的，
+        // 而 refreshNetworkInfo 可能被广播 / 网络回调从非主线程触发
+        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        val line = "[$time] $message"
         _ui.update { state -> state.copy(logs = (state.logs + line).takeLast(300)) }
     }
 

@@ -3,6 +3,7 @@ package com.zhu.yzunet.data
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -65,6 +66,26 @@ object NetworkUtils {
             context,
             Manifest.permission.ACCESS_FINE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * 系统「定位」总开关是否开启。
+     * 注意与 [hasLocationPermission] 是两回事：权限给了但总开关关着，同样读不到 SSID。
+     */
+    fun isLocationEnabled(context: Context): Boolean {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return false
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                lm.isLocationEnabled
+            } else {
+                @Suppress("DEPRECATION")
+                lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                    lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
 
     /** 当前 Wi-Fi 的 SSID；读不到（无权限 / 未连接 / 已脱敏）时返回 null */
     fun currentSsid(context: Context): String? {

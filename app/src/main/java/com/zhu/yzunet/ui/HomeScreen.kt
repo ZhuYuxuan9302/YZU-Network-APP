@@ -109,6 +109,7 @@ fun HomeScreen(
     vm: HomeViewModel,
     onRequestAutoReconnect: (Boolean) -> Unit,
     onRequestSsidPermission: () -> Unit,
+    onOpenLocationSettings: () -> Unit,
 ) {
     val ui by vm.ui.collectAsState()
 
@@ -165,7 +166,12 @@ fun HomeScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
-                        AccountCard(ui = ui, vm = vm, onRequestSsidPermission = onRequestSsidPermission)
+                        AccountCard(
+                            ui = ui,
+                            vm = vm,
+                            onRequestSsidPermission = onRequestSsidPermission,
+                            onOpenLocationSettings = onOpenLocationSettings,
+                        )
                     }
 
                     Column(
@@ -182,6 +188,7 @@ fun HomeScreen(
                             onRequestAutoReconnect = onRequestAutoReconnect,
                         )
                         LogCard(ui = ui, onClear = vm::clearLogs, height = logHeight)
+                        ResetSection(onReset = vm::resetAllSettings)
                         FooterHint()
                     }
                 }
@@ -202,7 +209,12 @@ fun HomeScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    AccountCard(ui = ui, vm = vm, onRequestSsidPermission = onRequestSsidPermission)
+                    AccountCard(
+                        ui = ui,
+                        vm = vm,
+                        onRequestSsidPermission = onRequestSsidPermission,
+                        onOpenLocationSettings = onOpenLocationSettings,
+                    )
                     ShortcutCard(onClick = vm::createShortcut)
                     AutomationCard(
                         ui = ui,
@@ -210,6 +222,7 @@ fun HomeScreen(
                         onRequestAutoReconnect = onRequestAutoReconnect,
                     )
                     LogCard(ui = ui, onClear = vm::clearLogs, height = logHeight)
+                    ResetSection(onReset = vm::resetAllSettings)
                     FooterHint()
                 }
             }
@@ -388,6 +401,7 @@ private fun AccountCard(
     ui: UiState,
     vm: HomeViewModel,
     onRequestSsidPermission: () -> Unit,
+    onOpenLocationSettings: () -> Unit,
 ) {
     var passwordVisible by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
@@ -451,7 +465,11 @@ private fun AccountCard(
 
         Spacer(Modifier.height(10.dp))
 
-        WifiHint(ui = ui, onRequestSsidPermission = onRequestSsidPermission)
+        WifiHint(
+            ui = ui,
+            onRequestSsidPermission = onRequestSsidPermission,
+            onOpenLocationSettings = onOpenLocationSettings,
+        )
 
         Spacer(Modifier.height(6.dp))
 
@@ -578,13 +596,18 @@ private fun SavedChip(saved: Boolean) {
  * 连错 Wi-Fi 时连通性检测照样能过，不提示用户根本发现不了。
  */
 @Composable
-private fun WifiHint(ui: UiState, onRequestSsidPermission: () -> Unit) {
+private fun WifiHint(
+    ui: UiState,
+    onRequestSsidPermission: () -> Unit,
+    onOpenLocationSettings: () -> Unit,
+) {
     val ssid = ui.wifiSsid
     val campus = ssid != null && NetworkUtils.isCampusSsid(ssid)
 
     val color: Color
     val message: String
     val actionLabel: String?
+    val action: (() -> Unit)?
 
     when {
         // ① 根本没连 Wi-Fi —— 用 hasNetwork 判断，不能只看 SSID 是否为 null
@@ -592,17 +615,31 @@ private fun WifiHint(ui: UiState, onRequestSsidPermission: () -> Unit) {
             color = warnColor()
             message = "未连接 Wi-Fi，请先连上 ${AppSettings.CAMPUS_SSID}"
             actionLabel = null
+            action = null
         }
 
-        // ② 连着 Wi-Fi 但读不到名字：多半是系统「定位」总开关关着，或没给定位权限
+        // ② 连着 Wi-Fi 但读不到名字：先看权限，再看系统定位总开关
         ssid == null -> {
             color = warnColor()
-            message = if (ui.canReadSsid) {
-                "已连上 Wi-Fi，但系统未提供网络名，请打开系统「定位」开关"
-            } else {
-                "未授予定位权限，无法读取 Wi-Fi 名称，也就无法确认是不是 ${AppSettings.CAMPUS_SSID}"
+            when {
+                !ui.canReadSsid -> {
+                    message = "未授予定位权限，无法读取 Wi-Fi 名称，也就无法确认是不是 ${AppSettings.CAMPUS_SSID}"
+                    actionLabel = "授权"
+                    action = onRequestSsidPermission
+                }
+
+                !ui.locationEnabled -> {
+                    message = "系统「定位」开关未开启，无法读取 Wi-Fi 名称（Android 系统限制）"
+                    actionLabel = "去开启"
+                    action = onOpenLocationSettings
+                }
+
+                else -> {
+                    message = "已连上 Wi-Fi，但系统未提供网络名"
+                    actionLabel = null
+                    action = null
+                }
             }
-            actionLabel = if (ui.canReadSsid) null else "授权"
         }
 
         // ③ 读到了名字，但不是校园网
@@ -610,12 +647,14 @@ private fun WifiHint(ui: UiState, onRequestSsidPermission: () -> Unit) {
             color = dangerColor()
             message = "当前 Wi-Fi「$ssid」不是 ${AppSettings.CAMPUS_SSID}，不会执行认证"
             actionLabel = null
+            action = null
         }
 
         else -> {
             color = successColor()
             message = "当前 Wi-Fi：$ssid"
             actionLabel = null
+            action = null
         }
     }
 
@@ -638,15 +677,17 @@ private fun WifiHint(ui: UiState, onRequestSsidPermission: () -> Unit) {
             color = color,
             modifier = Modifier.weight(1f),
         )
-        if (actionLabel != null) {
+        if (actionLabel != null && action != null) {
+            val label = actionLabel
+            val onClick = action
             TextButton(
-                onClick = onRequestSsidPermission,
+                onClick = onClick,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     horizontal = 8.dp,
                     vertical = 0.dp,
                 ),
             ) {
-                Text(actionLabel, fontSize = 12.sp)
+                Text(label, fontSize = 12.sp)
             }
         }
     }
@@ -906,6 +947,56 @@ private fun LoginButton(busy: Boolean, onLogin: () -> Unit, modifier: Modifier =
 }
 
 // ============================ 通用容器 ============================
+
+// ============================ 重置入口 ============================
+
+/**
+ * 「重置全部设置」：配置被改坏了又不知道原值时的兜底出口。
+ * 放在页面最底部并二次确认，避免误触。
+ */
+@Composable
+private fun ResetSection(onReset: () -> Unit) {
+    var showDialog by remember { mutableStateOf(false) }
+
+    TextButton(
+        onClick = { showDialog = true },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text = "重置全部设置",
+            fontSize = 13.sp,
+            color = dangerColor(),
+        )
+    }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text("重置全部设置？") },
+            text = {
+                Text(
+                    "将清除学工号、密码、网络服务选择、自动化开关、检测地址和运行日志，" +
+                        "并关闭后台自动重连。此操作不可撤销。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onReset()
+                        showDialog = false
+                    }
+                ) {
+                    Text("重置", color = dangerColor())
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDialog = false }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+}
 
 @Composable
 private fun FooterHint() {
