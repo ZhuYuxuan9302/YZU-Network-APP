@@ -10,6 +10,7 @@ import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.net.InetAddress
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -69,7 +70,10 @@ class CampusNetClient(context: Context) {
         return try {
             val bound = newBuilder()
                 .socketFactory(network.socketFactory)
-                .dns(Dns { hostname -> network.getAllByName(hostname).toList() })
+                .dns(object : Dns {
+                    override fun lookup(hostname: String): List<InetAddress> =
+                        network.getAllByName(hostname).toList()
+                })
                 .build()
             boundNetwork = network
             boundClient = bound
