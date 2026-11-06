@@ -24,9 +24,7 @@ class QuickLoginActivity : ComponentActivity() {
 
         val force = intent?.getBooleanExtra(AutoLoginService.EXTRA_FORCE, false) ?: false
 
-        val started = runCatching {
-            AutoLoginService.loginOnce(this, force)
-        }.isSuccess
+        val started = AutoLoginService.loginOnce(this, force)
 
         setResult(if (started) RESULT_OK else RESULT_CANCELED)
         finish()

@@ -35,7 +35,21 @@ object NetworkUtils {
                 ?: networks.firstOrNull {
                     hasTransport(cm, it, NetworkCapabilities.TRANSPORT_ETHERNET)
                 }
+                ?: activeLocalNetwork(cm)
         } catch (e: Exception) {
+            // 个别 ROM 在关闭定位时会限制 getAllNetworks()，退回当前活动网络
+            activeLocalNetwork(cm)
+        }
+    }
+
+    private fun activeLocalNetwork(cm: ConnectivityManager): Network? {
+        val active = cm.activeNetwork ?: return null
+        val caps = cm.getNetworkCapabilities(active) ?: return null
+        return if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        ) {
+            active
+        } else {
             null
         }
     }

@@ -66,6 +66,9 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // 用户可能在后台切换了 Wi-Fi，回到前台刷新一次
         vm.refreshNetworkInfo()
+        // 只有 Activity 真正处于前台时启动前台服务才是安全的：
+        // 放在这里补一次，能兜住「刚关掉权限弹窗就点开关」导致的启动失败
+        vm.ensureAutoReconnectService()
     }
 
     private fun needsNotificationPermission(): Boolean {

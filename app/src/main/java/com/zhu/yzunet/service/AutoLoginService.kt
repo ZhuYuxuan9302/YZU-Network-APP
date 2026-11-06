@@ -23,6 +23,7 @@ import com.zhu.yzunet.data.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -35,7 +36,17 @@ import kotlinx.coroutines.launch
  */
 class AutoLoginService : Service() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /**
+     * 兜住所有未捕获的协程异常：
+     * 没有这个 handler 的话，监控循环里任何一个意外异常都会按「未捕获异常」处理，直接让 App 闪退。
+     */
+    private val exceptionHandler = CoroutineExceptionHandler { _, e ->
+        Log.e(TAG, "后台协程异常（已忽略，服务继续运行）", e)
+    }
+
+    private val scope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
+
     private val client = CampusNetClient(this)
 
     /** 常驻监控循环是否在跑 */
@@ -48,28 +59,47 @@ class AutoLoginService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createChannel()
+        runCatching { createChannel() }
+            .onFailure { Log.w(TAG, "创建通知渠道失败", it) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> {
-                stopSelf()
-                return START_NOT_STICKY
-            }
-
-            ACTION_LOGIN_ONCE -> {
-                startAsForeground(buildNotification("正在登录校园网…", "使用已保存的账号"))
-                if (!oneShotRunning) {
-                    oneShotRunning = true
-                    val force = intent?.getBooleanExtra(EXTRA_FORCE, false) ?: false
-                    scope.launch { runOnce(force) }
-                }
-                return START_NOT_STICKY
-            }
+        if (intent?.action == ACTION_STOP) {
+            stopSelf()
+            return START_NOT_STICKY
         }
 
-        startAsForeground(buildNotification("正在监控校园网连接", "等待检测…"))
+        val oneShot = intent?.action == ACTION_LOGIN_ONCE
+
+        // startForeground 在 Android 12+ 可能抛 ForegroundServiceStartNotAllowedException
+        // （比如从权限回调里启动、App 还没真正回到前台）。这里必须兜住：
+        // 它跑在主线程上，漏出去就是直接闪退。
+        val foregroundReady = runCatching {
+            if (oneShot) {
+                startAsForeground(buildNotification("正在登录校园网…", "使用已保存的账号"))
+            } else {
+                startAsForeground(buildNotification("正在监控校园网连接", "等待检测…"))
+            }
+        }.onFailure {
+            Log.w(TAG, "startForeground 失败，停止服务", it)
+        }.isSuccess
+
+        if (!foregroundReady) {
+            runCatching {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            }
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        if (oneShot) {
+            if (!oneShotRunning) {
+                oneShotRunning = true
+                val force = intent?.getBooleanExtra(EXTRA_FORCE, false) ?: false
+                scope.launch { runOnce(force) }
+            }
+            return START_NOT_STICKY
+        }
 
         if (!running) {
             running = true
@@ -299,31 +329,35 @@ class AutoLoginService : Service() {
         /** true 时跳过连通性检测，强制重新认证 */
         const val EXTRA_FORCE = "force"
 
-        fun start(context: Context) {
+        /** 启动常驻监控服务；返回是否成功发起（Android 12+ 后台启动会被拒绝，不抛异常） */
+        fun start(context: Context): Boolean =
             startServiceWith(context, Intent(context, AutoLoginService::class.java))
-        }
 
         fun stop(context: Context) {
-            context.stopService(Intent(context, AutoLoginService::class.java))
+            runCatching { context.stopService(Intent(context, AutoLoginService::class.java)) }
         }
 
         /**
          * 一次性登录（供 QuickLoginActivity / 自动化调用）。
          * 必须由处于前台的组件调用，否则 Android 12+ 不允许后台启动前台服务。
          */
-        fun loginOnce(context: Context, force: Boolean) {
+        fun loginOnce(context: Context, force: Boolean): Boolean {
             val intent = Intent(context, AutoLoginService::class.java)
                 .setAction(ACTION_LOGIN_ONCE)
                 .putExtra(EXTRA_FORCE, force)
-            startServiceWith(context, intent)
+            return startServiceWith(context, intent)
         }
 
-        private fun startServiceWith(context: Context, intent: Intent) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-        }
+        private fun startServiceWith(context: Context, intent: Intent): Boolean =
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+                true
+            }.onFailure {
+                Log.w(TAG, "启动前台服务失败", it)
+            }.getOrDefault(false)
     }
 }

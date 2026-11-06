@@ -584,31 +584,38 @@ private fun WifiHint(ui: UiState, onRequestSsidPermission: () -> Unit) {
 
     val color: Color
     val message: String
-    val needPermission: Boolean
+    val actionLabel: String?
 
     when {
-        !ui.canReadSsid -> {
-            color = warnColor()
-            message = "未授予定位权限，无法校验当前 Wi-Fi 是否为 ${AppSettings.CAMPUS_SSID}"
-            needPermission = true
-        }
-
-        ssid == null -> {
+        // ① 根本没连 Wi-Fi —— 用 hasNetwork 判断，不能只看 SSID 是否为 null
+        !ui.hasNetwork -> {
             color = warnColor()
             message = "未连接 Wi-Fi，请先连上 ${AppSettings.CAMPUS_SSID}"
-            needPermission = false
+            actionLabel = null
         }
 
+        // ② 连着 Wi-Fi 但读不到名字：多半是系统「定位」总开关关着，或没给定位权限
+        ssid == null -> {
+            color = warnColor()
+            message = if (ui.canReadSsid) {
+                "已连上 Wi-Fi，但系统未提供网络名，请打开系统「定位」开关"
+            } else {
+                "未授予定位权限，无法读取 Wi-Fi 名称，也就无法确认是不是 ${AppSettings.CAMPUS_SSID}"
+            }
+            actionLabel = if (ui.canReadSsid) null else "授权"
+        }
+
+        // ③ 读到了名字，但不是校园网
         !campus -> {
             color = dangerColor()
             message = "当前 Wi-Fi「$ssid」不是 ${AppSettings.CAMPUS_SSID}，不会执行认证"
-            needPermission = false
+            actionLabel = null
         }
 
         else -> {
             color = successColor()
             message = "当前 Wi-Fi：$ssid"
-            needPermission = false
+            actionLabel = null
         }
     }
 
@@ -619,7 +626,7 @@ private fun WifiHint(ui: UiState, onRequestSsidPermission: () -> Unit) {
             .background(color.copy(alpha = 0.10f))
             .padding(
                 start = 12.dp,
-                end = if (needPermission) 4.dp else 12.dp,
+                end = if (actionLabel != null) 4.dp else 12.dp,
                 top = 8.dp,
                 bottom = 8.dp,
             ),
@@ -631,7 +638,7 @@ private fun WifiHint(ui: UiState, onRequestSsidPermission: () -> Unit) {
             color = color,
             modifier = Modifier.weight(1f),
         )
-        if (needPermission) {
+        if (actionLabel != null) {
             TextButton(
                 onClick = onRequestSsidPermission,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -639,7 +646,7 @@ private fun WifiHint(ui: UiState, onRequestSsidPermission: () -> Unit) {
                     vertical = 0.dp,
                 ),
             ) {
-                Text("授权", fontSize = 12.sp)
+                Text(actionLabel, fontSize = 12.sp)
             }
         }
     }

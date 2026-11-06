@@ -45,7 +45,9 @@ data class UiState(
     val statusDetail: String = "尚未检测",
     val busy: Boolean = false,
     val logs: List<String> = emptyList(),
-    /** 当前 Wi-Fi 名称；null 表示读不到（未连接 / 无定位权限） */
+    /** 当前是否有 Wi-Fi / 以太网连接（与能否读到 SSID 无关） */
+    val hasNetwork: Boolean = false,
+    /** 当前 Wi-Fi 名称；null 表示读不到（未连接 / 无定位权限 / 系统定位关闭） */
     val wifiSsid: String? = null,
     /** 是否已获得读取 SSID 所需的定位权限 */
     val canReadSsid: Boolean = false,
@@ -70,6 +72,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     /** 待执行的防抖落盘任务 */
     private var pendingSave: Job? = null
 
+    /** 「后台服务启动失败」只提示一次，避免每次 onResume 都刷日志 */
+    private var serviceStartWarned = false
+
     /** 界面首次组合时调用：按配置决定是否自动登录 */
     fun onLaunch() {
         if (launched) return
@@ -79,7 +84,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
         val settings = _ui.value.settings
         if (settings.autoReconnect) {
-            runCatching { AutoLoginService.start(getApplication()) }
+            ensureAutoReconnectService()
         }
         if (!settings.hasCredentials) {
             addLog("还没有保存账号，请填入学工号与密码后点「一键连接」")
@@ -97,9 +102,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshNetworkInfo() {
         val app = getApplication<Application>()
         val granted = NetworkUtils.hasLocationPermission(app)
+        val hasCampusNet = NetworkUtils.hasCampusNetwork(app)
         val ssid = if (granted) NetworkUtils.currentSsid(app) else null
         val previous = _ui.value.wifiSsid
-        _ui.update { it.copy(canReadSsid = granted, wifiSsid = ssid) }
+        _ui.update {
+            it.copy(canReadSsid = granted, wifiSsid = ssid, hasNetwork = hasCampusNet)
+        }
 
         // 只在 Wi-Fi 变化时记一条，避免每次回到前台都刷日志
         if (granted && ssid != null && ssid != previous) {
@@ -110,6 +118,22 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     "当前 Wi-Fi：$ssid（非 ${AppSettings.CAMPUS_SSID}）"
                 }
             )
+        }
+    }
+
+    /**
+     * 确保后台服务真的起来了。
+     * 必须在 Activity 处于前台时调用 —— Android 12+ 从后台（包括权限回调那一瞬间）
+     * 启动前台服务会被系统拒绝，服务里再调 startForeground 就会抛异常。
+     */
+    fun ensureAutoReconnectService() {
+        if (!_ui.value.settings.autoReconnect) return
+
+        if (AutoLoginService.start(getApplication())) {
+            serviceStartWarned = false
+        } else if (!serviceStartWarned) {
+            serviceStartWarned = true
+            addLog("后台服务暂时无法启动，回到应用时会自动重试")
         }
     }
 
@@ -152,11 +176,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             if (!_ui.value.settings.hasCredentials) {
                 addLog("提示：账号为空，后台自动重连会等你填好账号后再工作")
             }
-            runCatching { AutoLoginService.start(getApplication()) }
-                .onFailure { addLog("启动后台服务失败：${it.message}") }
             addLog("已开启后台自动重连（间隔 ${_ui.value.settings.checkIntervalSec} 秒）")
+            // 立刻尝试启动；若此刻 App 还没回到前台（比如刚关掉权限弹窗），
+            // onResume 里会再补一次，不会因此崩溃
+            ensureAutoReconnectService()
         } else {
-            runCatching { AutoLoginService.stop(getApplication()) }
+            AutoLoginService.stop(getApplication())
             addLog("已关闭后台自动重连")
         }
     }
@@ -192,12 +217,15 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
             val app = getApplication<Application>()
             val canReadSsid = NetworkUtils.hasLocationPermission(app)
+            val hasCampusNet = NetworkUtils.hasCampusNetwork(app)
             val ssid = if (canReadSsid) NetworkUtils.currentSsid(app) else null
-            _ui.update { it.copy(canReadSsid = canReadSsid, wifiSsid = ssid) }
+            _ui.update {
+                it.copy(canReadSsid = canReadSsid, wifiSsid = ssid, hasNetwork = hasCampusNet)
+            }
 
             // ⓪ 先确认连的确实是校园网：别的 Wi-Fi 上连通性检测同样会通过，
             //    不校验 SSID 就会出现「假成功」——检测说在线，其实根本没认证。
-            if (!NetworkUtils.hasCampusNetwork(app)) {
+            if (!hasCampusNet) {
                 addLog("当前没有连接到 Wi-Fi / 以太网，已中止认证")
                 _ui.update {
                     it.copy(
