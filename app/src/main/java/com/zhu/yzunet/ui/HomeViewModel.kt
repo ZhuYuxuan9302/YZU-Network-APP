@@ -83,16 +83,16 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---------------- 表单（始终可编辑，改动即时落盘） ----------------
 
-    fun updateUserId(value: String) = mutateSettings({ it.copy(userId = value) }, INPUT_DEBOUNCE_MS)
+    fun updateUserId(value: String) = mutateSettings(INPUT_DEBOUNCE_MS) { it.copy(userId = value) }
 
-    fun updatePassword(value: String) = mutateSettings({ it.copy(password = value) }, INPUT_DEBOUNCE_MS)
+    fun updatePassword(value: String) = mutateSettings(INPUT_DEBOUNCE_MS) { it.copy(password = value) }
 
     fun updateServiceIndex(index: Int) = mutateSettings {
         it.copy(serviceIndex = index.coerceIn(1, AppSettings.SERVICES.size))
     }
 
     fun updateCheckUrl(value: String) =
-        mutateSettings({ it.copy(checkUrl = value) }, INPUT_DEBOUNCE_MS)
+        mutateSettings(INPUT_DEBOUNCE_MS) { it.copy(checkUrl = value) }
 
     /** 清除已保存的账号信息（需二次确认后调用） */
     fun clearCredentials() {
@@ -237,7 +237,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---------------- 内部 ----------------
 
-    private fun mutateSettings(block: (AppSettings) -> AppSettings, debounceMs: Long = 0L) {
+    private fun mutateSettings(
+        debounceMs: Long = 0L,
+        block: (AppSettings) -> AppSettings,
+    ) {
         val next = block(_ui.value.settings)
         _ui.update { it.copy(settings = next) }
 
