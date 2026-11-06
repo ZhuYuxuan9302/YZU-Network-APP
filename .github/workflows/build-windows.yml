@@ -2,10 +2,17 @@ name: Build Windows App
 
 on:
   push:
+    branches: [ main, master ]
+    # 只有 Windows 相关文件变动才触发；安卓代码变动不触发本流水线
     paths:
       - 'windows/**'
       - '.github/workflows/build-windows.yml'
   workflow_dispatch:
+
+# 同一分支连续推送时取消上一次未跑完的任务，避免排队堆积
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:

@@ -129,6 +129,7 @@ public partial class MainWindow : Window
             {
                 _reconnect.Start();
                 TryLog("已恢复后台自动重连");
+                AnnounceReconnectStarted();
             }
 
             if (_settings.AutoConnectOnStart && _settings.HasCredentials)
@@ -512,7 +513,7 @@ public partial class MainWindow : Window
 
     // ==================== 自动重连回调 ====================
 
-    private void OnReconnectStatusChanged(string title, string detail)
+    private void OnReconnectStatusChanged(string title, string detail, bool notify)
     {
         // 退出过程中 Dispatcher 可能已经关闭，避免后台线程抛异常
         if (Dispatcher.HasShutdownStarted) return;
@@ -520,10 +521,15 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(new Action(() =>
         {
             Log($"[自动重连] {title}：{detail}");
-            BalloonRequested?.Invoke(title, detail);
+
+            // 只有"刚开启 / 检测到断线 / 登录成功失败 / 异常"才会带 notify，
+            // 例行轮询（在线、未联网、不在校园网）只在日志里留一行，不弹气泡。
+            if (notify) BalloonRequested?.Invoke(title, detail);
 
             if (title.Contains("成功", StringComparison.Ordinal))
                 SetStatus("外网已连接", detail, StatusKind.Online);
+            else if (title.Contains("检测到断线", StringComparison.Ordinal))
+                SetStatus("检测到断线", detail, StatusKind.Checking);
             else if (title.Contains("失败", StringComparison.Ordinal) ||
                      title.Contains("异常", StringComparison.Ordinal) ||
                      title.Contains("不在校园网", StringComparison.Ordinal))
@@ -596,12 +602,21 @@ public partial class MainWindow : Window
         {
             _reconnect.Start();
             Log($"已开启后台自动重连（间隔 {_settings.CheckIntervalSec} 秒）");
+            AnnounceReconnectStarted();
         }
         else
         {
             _reconnect.Stop();
             Log("已关闭后台自动重连");
         }
+    }
+
+    /// <summary>开启自动重连时给一次提示，之后只在真正断线重连时才打扰用户</summary>
+    private void AnnounceReconnectStarted()
+    {
+        BalloonRequested?.Invoke(
+            "自动重连已开启",
+            $"每 {_settings.CheckIntervalSec} 秒静默检测一次，断线后自动登录；期间不再弹提示");
     }
 
     private void AutoStartCheck_Click(object sender, RoutedEventArgs e)

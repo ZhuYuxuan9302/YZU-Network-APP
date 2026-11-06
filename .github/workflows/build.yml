@@ -3,7 +3,16 @@ name: Build APK
 on:
   push:
     branches: [ main, master ]
+    # 只有安卓相关文件变动才触发；Windows 子目录与 Windows 工作流本身不触发本流水线
+    paths-ignore:
+      - 'windows/**'
+      - '.github/workflows/build-windows.yml'
   workflow_dispatch:
+
+# 同一分支连续推送时取消上一次未跑完的任务，避免排队堆积
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
